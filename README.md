@@ -1,164 +1,190 @@
-# Mid-Level Full-Stack Developer — Take-Home Assignment
+# ระบบจองตั๋วอีเวนต์ (Event Ticket Booking)
 
-## ระบบจองตั๋วอีเวนต์ (Event Ticket Booking)
+ระบบจองอีเวนต์แบบ Full-stack สำหรับดูและค้นหาอีเวนต์ จองสะสมได้ไม่เกิน 4 ที่ต่อผู้ใช้ต่ออีเวนต์ ดูและยกเลิกการจอง รวมถึงจัดการอีเวนต์สำหรับผู้ดูแลระบบ โดยออกแบบให้จำนวนที่นั่งถูกต้องเมื่อมีคำขอพร้อมกันจำนวนมาก
 
-สร้างระบบจองตั๋วอีเวนต์แบบ full-stack ที่ผู้ใช้ดูรายการอีเวนต์ จองที่นั่ง และจัดการการจองของตัวเองได้ โดยระบบต้อง **ไม่จองเกินจำนวนที่นั่ง** แม้มีผู้ใช้จองพร้อมกันจำนวนมาก
+## Tech stack
 
-- **ระยะเวลา:** 7 วันนับจากวันที่ได้รับโจทย์ (คาดว่าใช้เวลาทำจริงประมาณ 8–12 ชั่วโมง)
-- **หลังส่งงาน:** นัด code walkthrough 30–45 นาที เพื่ออธิบายโค้ดและการตัดสินใจในการออกแบบ
+- Frontend: Next.js App Router, React และ TypeScript แบบ strict
+- Backend: Go, Gin และ GORM
+- Database: PostgreSQL พร้อม versioned migrations ด้วย Goose
+- Cache: Redis
+- Authentication: JWT ใน `HttpOnly` cookie
+- Runtime: Docker และ Docker Compose
 
----
+## ฟีเจอร์หลัก
 
-## 1. Tech Stack (บังคับ)
+- สมัครสมาชิก เข้าสู่ระบบ และออกจากระบบ
+- รายการอีเวนต์พร้อม prefix search และ pagination
+- รายละเอียดอีเวนต์และจำนวนที่นั่งคงเหลือ
+- จองเพิ่มอีเวนต์เดิมได้หลายครั้ง โดยยอดสถานะยืนยันรวมไม่เกิน 4 ที่
+- ดูและยกเลิกการจองของตนเอง พร้อมคืนที่นั่งเพียงครั้งเดียว
+- Admin สร้างและแก้ไขอีเวนต์ผ่าน modal และแสดงรายการหน้าละ 10 รายการ
+- Redis cache สำหรับรายการอีเวนต์ พร้อม invalidation เมื่อข้อมูลเปลี่ยน
+- Responsive UI, loading, error และ empty states
 
-| ส่วน | เทคโนโลยี |
+## วิธีติดตั้งและรันระบบ
+
+### สิ่งที่ต้องมี
+
+- Docker Desktop ที่รองรับ Docker Compose
+- Git
+
+### เริ่มระบบด้วย Docker
+
+```powershell
+git clone https://github.com/Terminal-cmd99/mid-fullstack-test.git
+cd mid-fullstack-test
+Copy-Item .env.example .env
+docker compose up --build
+```
+
+สำหรับระบบที่เปิดสู่ภายนอก ต้องเปลี่ยน `POSTGRES_PASSWORD`, `JWT_SECRET` และรหัสผ่าน demo ใน `.env` ก่อนใช้งาน ห้ามนำ `.env` ขึ้น Git
+
+เมื่อทุก service เป็น healthy ให้เปิด:
+
+- Web application: <http://localhost:3000>
+- Frontend healthcheck: <http://localhost:3000/health>
+- API ผ่าน Next.js proxy: <http://localhost:3000/api/events>
+
+หยุดระบบโดยเก็บข้อมูล PostgreSQL ไว้:
+
+```powershell
+docker compose down
+```
+
+PostgreSQL ใช้ named volume `pgdata` จึงยังเก็บข้อมูลหลัง `docker compose down` หากต้องการลบข้อมูล local ทั้งหมดจึงค่อยใช้ `docker compose down -v`
+
+## Seed credentials
+
+เมื่อ `SEED_DEMO=true` backend จะสร้างผู้ใช้ตัวอย่างและอีเวนต์ 20 รายการแบบ idempotent
+
+| Role | Email | Password |
+|---|---|---|
+| Admin | `admin.demo@example.com` | `LocalAdmin123!` |
+| User | `user.demo@example.com` | `LocalUser123!` |
+
+ค่าดังกล่าวเป็น local demo values จาก `.env.example` เท่านั้น สำหรับ deployment ต้องกำหนดค่าใหม่ผ่าน environment variables ของ platform
+
+## วิธีรัน Tests
+
+### Unit tests ของ backend
+
+```powershell
+cd backend
+go test ./...
+```
+
+### Integration และ concurrency tests ด้วย PostgreSQL/Redis จริง
+
+รันจาก root ของ repository:
+
+```powershell
+docker compose -f docker-compose.test.yml up --build --abort-on-container-exit --exit-code-from backend-tests
+docker compose -f docker-compose.test.yml down -v
+```
+
+Integration suite ครอบคลุม API flow หลัก, database constraints, cache invalidation, Redis fallback, ผู้ใช้ 100 คนแย่งจอง 10 ที่นั่ง, ผู้ใช้เดียวส่งคำขอพร้อมกันแต่ยอดไม่เกิน 4 และการยกเลิกพร้อมกันที่ต้องคืนที่นั่งเพียงครั้งเดียว
+
+### Frontend quality checks
+
+```powershell
+cd frontend
+npm ci
+npm run lint
+npm run typecheck
+npm run build
+```
+
+## Architecture
+
+```mermaid
+flowchart LR
+    Browser[Browser] --> Next[Next.js App Router]
+    Next -->|Server Components| Proxy[Next.js Route Handler]
+    Browser -->|Interactive requests| Proxy
+    Proxy -->|Private HTTP + forwarded cookie/origin| API[Go / Gin API]
+    API --> Auth[Auth and RBAC middleware]
+    API --> Handlers[Handlers]
+    Handlers --> Booking[Booking service]
+    Handlers --> DB[(PostgreSQL)]
+    Booking --> DB
+    Handlers --> Cache[(Redis)]
+    Booking --> Cache
+```
+
+- Next.js ใช้ Server Components สำหรับข้อมูลหลัก และใช้ Client Components เฉพาะฟอร์ม, modal และ interaction
+- Route Handler `/api/[...path]` เป็น same-origin proxy และส่งต่อ cookie ไป backend จึงไม่เปิด JWT ให้ JavaScript อ่าน
+- Backend แยก `middleware`, `handler`, `service`, `database`, `cache` และ `migrations`
+- CRUD ที่ตรงไปตรงมาอยู่ใน handler ส่วนกฎที่มี transaction และ concurrency อยู่ใน booking service
+- Backend รัน Goose migrations อัตโนมัติก่อน seed และเริ่ม HTTP server
+
+## การป้องกันการจองเกิน
+
+การสร้าง booking ทำภายใน PostgreSQL transaction เดียว โดยลดที่นั่งด้วย conditional atomic update:
+
+```sql
+UPDATE events
+SET available_seats = available_seats - $quantity
+WHERE id = $event_id
+  AND available_seats >= $quantity
+RETURNING available_seats;
+```
+
+PostgreSQL จะล็อก row ของอีเวนต์ระหว่างการ update ทำให้คำขอพร้อมกันถูก serialize ที่ฐานข้อมูล หากที่นั่งไม่พอ query จะไม่คืน row และ transaction ถูก rollback
+
+จากนั้นระบบใช้ `INSERT ... ON CONFLICT (user_id, event_id) DO UPDATE` เพื่อบวกจำนวนลง booking เดิม โดยมีเงื่อนไขว่ายอดใหม่ต้องไม่เกิน 4 ที่ หากเงื่อนไขนี้ไม่ผ่าน transaction ทั้งก้อนจะ rollback รวมถึงการลดที่นั่งก่อนหน้า จึงรองรับการจองเพิ่มหลายครั้งโดยรักษายอดรวมต่อผู้ใช้ต่ออีเวนต์ไม่เกิน 4
+
+การยกเลิกใช้ `SELECT ... FOR UPDATE` กับ event และ booking ตามด้วย conditional status update เฉพาะ booking ที่ยัง confirmed แล้วจึงคืนที่นั่ง วิธีนี้ป้องกันการกดยกเลิกพร้อมกันแล้วคืนที่นั่งซ้ำ
+
+เลือกให้ PostgreSQL เป็นแหล่งความจริงแทน distributed lock เพราะ invariant ทั้ง booking และจำนวนที่นั่งอยู่ในฐานข้อมูลเดียวกัน Transaction จึง atomic, ตรวจสอบได้ และทำงานถูกต้องแม้ backend มีหลาย instance ส่วน Redis ใช้เฉพาะ cache และความผิดพลาดของ Redis ไม่กระทบความถูกต้องของการจอง
+
+## Database constraints และ indexes
+
+Constraints สำคัญประกอบด้วย foreign keys, unique email, `UNIQUE (user_id, event_id)`, quantity ระหว่าง 1–4, role/status ที่อนุญาต และเงื่อนไข `0 <= available_seats <= total_seats`
+
+| Index | เหตุผล |
 |---|---|
-| Frontend | Next.js (App Router) + TypeScript |
-| Backend | .NET 8 ขึ้นไป **หรือ** Go (เลือกอย่างใดอย่างหนึ่ง) |
-| Database | PostgreSQL |
-| Deployment | Docker + Docker Compose |
+| `idx_events_start_id (starts_at, id)` | รองรับการกรองอีเวนต์อนาคตและเรียง `starts_at, id` สำหรับ pagination ที่ให้ผลลัพธ์คงที่ |
+| `idx_events_title_prefix ((LOWER(title)) text_pattern_ops)` | รองรับ prefix search รูปแบบ `LOWER(title) LIKE 'keyword%'` โดยไม่ต้อง scan ทุก row |
+| `idx_bookings_user_created (user_id, created_at DESC, id DESC)` | รองรับหน้าการจองของฉันที่กรองด้วย user และเรียงรายการล่าสุดก่อน |
+| Unique indexes จาก `users.email` และ `(user_id, event_id)` | ป้องกันข้อมูลซ้ำที่ฐานข้อมูล และใช้เป็น conflict target สำหรับ booking upsert |
 
----
+Connection pool กำหนดสูงสุด 25 open connections, 10 idle connections และอายุ connection 30 นาที เพื่อจำกัดการใช้ connection ของแต่ละ backend instance และนำ connection กลับมาใช้ซ้ำ
 
-## 2. ฟีเจอร์ (บังคับทั้งหมด)
+## Security
 
-1. สมัครสมาชิก / login / logout
-2. รายการอีเวนต์ พร้อม pagination และค้นหาด้วยชื่อ
-3. หน้ารายละเอียดอีเวนต์ แสดงจำนวนที่นั่งคงเหลือ
-4. จองตั๋ว (หนึ่งคนจองได้ไม่เกิน 4 ที่ต่ออีเวนต์)
-5. หน้า "การจองของฉัน" และยกเลิกการจองได้ (ยกเลิกแล้วที่นั่งต้องกลับมาว่าง)
-6. Admin: สร้างและแก้ไขอีเวนต์ (role-based access: `admin` / `user`)
+- Password hash ด้วย bcrypt และไม่ส่ง `password_hash` ใน JSON
+- JWT อายุ 8 ชั่วโมง เก็บใน `HttpOnly`, `SameSite=Lax` cookie และใช้ `Secure` เมื่อ `APP_ENV=production`
+- ตรวจ role admin ที่ middleware สำหรับ endpoint จัดการอีเวนต์
+- ตรวจ Origin สำหรับ mutation endpoints เพื่อลดความเสี่ยง CSRF
+- Validate และ normalize input ก่อนบันทึก พร้อม error response รูปแบบเดียวกัน
+- Docker runtime ใช้ non-root user ทั้ง frontend และ backend
+- Secrets รับจาก environment variables และ `.env` ถูก ignore จาก Git
 
-### ข้อบังคับสำคัญ: ห้ามจองเกินจำนวนที่นั่ง
+## API documentation
 
-แม้มี request จองเข้ามาพร้อมกัน 100 ตัว จำนวนที่นั่งที่ถูกจองต้องไม่เกินที่มีอยู่จริง ใน README ต้องอธิบายว่าป้องกันอย่างไร และทำไมถึงเลือกวิธีนั้น (เช่น DB transaction + row lock, optimistic locking หรือ distributed lock)
+OpenAPI 3.1 specification อยู่ที่ [`backend/openapi.yaml`](backend/openapi.yaml) สามารถเปิดด้วย Swagger Editor หรือ import เข้า Postman/Insomnia ได้
 
----
+## Trade-offs และสิ่งที่จะปรับปรุง
 
-## 3. ข้อกำหนดทางเทคนิค
+- ใช้ offset pagination เพราะเข้าใจง่ายและเหมาะกับข้อมูล demo หากข้อมูลมีขนาดใหญ่จะเปลี่ยนเป็น cursor pagination
+- Search เป็น case-insensitive prefix search เพื่อใช้ B-tree expression index ได้ หากต้องการค้นหาบางส่วนหรือรองรับ typo จะใช้ `pg_trgm` หรือ full-text search
+- Redis cache ใช้ TTL 30 วินาทีและ versioned invalidation การเพิ่ม version หลีกเลี่ยง wildcard delete แต่ key รุ่นเก่าจะอยู่จนหมด TTL
+- JWT เป็น stateless และ logout ทำโดยลบ cookie หากต้องการ revoke token ก่อนหมดอายุจะเพิ่ม token version หรือ denylist
+- Seed ทำใน startup เพื่อให้ demo เปิดได้คำสั่งเดียว ระบบ production ขนาดใหญ่ควรแยก seed/migration เป็น release job
+- แยก booking service เฉพาะ business logic ที่ซับซ้อน ส่วน CRUD ใช้ GORM ใน handler เพื่อลด boilerplate หากระบบโตขึ้นจะเพิ่ม repository interfaces และ service layer ให้ทุก domain
+- ยังไม่มี CI, browser E2E, rate limiter, Nginx/load balancer และ production observability หากมีเวลาเพิ่มจะทำตามลำดับดังกล่าว
 
-### 3.1 Frontend (Next.js App Router)
+## คะแนนพิเศษที่ทำ
 
-- ใช้ **Server Components** เป็นหลักในการดึงข้อมูล ใช้ Client Component เฉพาะส่วนที่ต้องมี interaction จริง
-- มี `loading.tsx` และ `error.tsx` ในหน้าที่ดึงข้อมูล
-- มี Server Action หรือ Route Handler อย่างน้อยหนึ่งจุด
-- TypeScript แบบ `strict` และหลีกเลี่ยง `any`
-- UI ต้อง responsive (ใช้งานได้บนมือถือ)
-- แสดง empty state, loading state และ error state อย่างเหมาะสม
+- Redis cache รายการอีเวนต์พร้อม versioned invalidation และ fallback ไป PostgreSQL เมื่อ Redis ใช้งานไม่ได้
+- PostgreSQL connection pool configuration
+- Concurrency integration test จำลอง 100 users พร้อมกันและ race cases ของ booking/cancellation
+- Architecture diagram ใน README
 
-### 3.2 Backend
+Redis bonus ยังไม่ถือว่าครบทั้งข้อเพราะยังไม่มี rate limiting และ PostgreSQL advanced bonus ยังไม่ครบเพราะยังใช้ offset pagination และยังไม่มี `pg_trgm`/full-text search
 
-- REST API ที่ใช้ HTTP status code ถูกต้อง และมีรูปแบบ error response ที่สม่ำเสมอ
-- Validate input ทุก endpoint
-- Auth ด้วย JWT ที่เก็บใน httpOnly cookie หรือ session-based auth
-- แยก layer ให้ชัดเจน (เช่น handler / service / repository)
-- มี API docs แบบ OpenAPI/Swagger
-- มี endpoint `GET /health` สำหรับ healthcheck
+## Deployment
 
-### 3.3 Database (PostgreSQL)
-
-- **Migrations มี version และอยู่ใน repo** และรันอัตโนมัติตอนเปิดระบบ
-  - .NET: EF Core Migrations
-  - Go: `golang-migrate` หรือ `goose`
-- **Seed data:** admin อย่างน้อย 1 คน, user ทั่วไป 1 คน และอีเวนต์ประมาณ 20 รายการ (ใส่ credential ของ seed user ไว้ใน README)
-- **บังคับ constraint ที่ระดับ database** ไม่ใช่แค่ในโค้ด เช่น `FOREIGN KEY`, `UNIQUE (email)`, `CHECK (available_seats >= 0)`
-- **Index ที่เหมาะสม** บนคอลัมน์ที่ใช้ค้นหาและทำ pagination พร้อมเขียนเหตุผลของแต่ละ index ไว้ใน README
-- **ขั้นตอนการจองทำใน transaction**
-
-### 3.4 Docker & Docker Compose
-
-- **Dockerfile แบบ multi-stage** สำหรับทั้ง frontend และ backend
-  - รันด้วย non-root user
-  - image มีขนาดเล็ก (เช่น Next.js ใช้ `output: "standalone"`)
-- **มี healthcheck ทุก service** (frontend, backend, postgres และ service อื่นที่เพิ่มเข้ามา)
-  - Postgres ใช้ `pg_isready`
-  - ใช้ `depends_on: condition: service_healthy` เพื่อให้ service เริ่มตามลำดับที่ถูกต้อง
-- Postgres ใช้ **named volume** และข้อมูลต้องยังอยู่หลัง `docker compose down` แล้ว `up` ใหม่
-- **`docker compose up --build` ต้องเปิดทั้งระบบได้ในคำสั่งเดียว** บนเครื่องที่มีแค่ Docker
-- ห้าม commit secrets ลง repo ให้ใช้ `.env` และมี `.env.example`
-
-### 3.5 Testing
-
-- Unit test สำหรับ business logic (โดยเฉพาะการจองและการตรวจจำนวนที่นั่ง)
-- Integration test สำหรับ API อย่างน้อย endpoint หลัก
-- อธิบายวิธีรัน test ไว้ใน README
-
----
-
-## 4. คะแนนพิเศษ (ไม่บังคับ)
-
-แต่ละข้อมีเป้าหมายที่ชัดเจน ให้ทำตามเป้าหมายนั้น ไม่ใช่แค่ติดตั้งเครื่องมือ
-
-### 4.1 Redis
-- Cache รายการอีเวนต์ และ **invalidate cache เมื่อข้อมูลเปลี่ยน** (สร้าง/แก้ไขอีเวนต์ หรือมีการจอง)
-- Rate limit API การจอง (เช่น ไม่เกิน N request ต่อนาทีต่อ user) และตอบ `429 Too Many Requests` เมื่อเกิน
-
-### 4.2 Nginx / Load Balancer
-- Nginx เป็น reverse proxy หน้า frontend และ backend
-- รัน **backend อย่างน้อย 2 replica** และพิสูจน์ได้ว่ามีการกระจายโหลดจริง (เช่น ส่ง header `X-Instance-Id` กลับมาในทุก response)
-- Backend ต้องเป็น stateless เพื่อให้ทำงานถูกต้องไม่ว่า request จะไปถึง replica ไหน
-
-### 4.3 Deploy บน Cloud จริง
-- Deploy บน DigitalOcean, Railway หรือ cloud อื่น
-- มี URL ที่ใช้งานได้จริง พร้อม HTTPS
-
-### 4.4 PostgreSQL ขั้นสูง
-- ใช้ **cursor-based pagination** แทน `OFFSET` ค่าสูงๆ
-- ค้นหาด้วย `ILIKE` คู่กับ index แบบ **`pg_trgm`** หรือใช้ **full-text search**
-- ตั้งค่า **connection pool** อย่างเหมาะสม และอธิบายเหตุผลของค่าที่เลือก
-
-### 4.5 อื่นๆ
-- CI บน GitHub Actions (lint, test, build)
-- E2E test (เช่น Playwright)
-- Load-test script ที่แสดงว่าไม่มีการจองเกินเมื่อมี request พร้อมกันจำนวนมาก
-- Structured logging
-- Architecture diagram
-
----
-
-## 5. สิ่งที่ต้องส่ง
-
-1. **Git repository** (GitHub / GitLab) และเก็บ commit history ไว้ ไม่ต้อง squash
-2. **README.md** ที่มี:
-   - วิธีติดตั้งและรันระบบ
-   - วิธีรัน test
-   - Seed credential สำหรับทดสอบ
-   - Architecture ภาพรวม
-   - วิธีป้องกันการจองเกิน และเหตุผล
-   - เหตุผลของ index ที่สร้าง
-   - Trade-off ที่เลือก และสิ่งที่จะปรับปรุงถ้ามีเวลาเพิ่ม
-   - รายการคะแนนพิเศษที่ทำ
-   - URL ของระบบที่ deploy แล้ว (ถ้าทำข้อ 4.3)
-3. **`.env.example`**
-4. **API docs** (Swagger UI หรือไฟล์ OpenAPI)
-
----
-
-## 6. เกณฑ์ให้คะแนน (100 คะแนน + คะแนนพิเศษ)
-
-| หมวด | คะแนน |
-|---|---|
-| ฟีเจอร์ทำงานครบตาม spec | 25 |
-| คุณภาพโค้ดและโครงสร้าง (แยก layer, typing, อ่านง่าย) | 20 |
-| Concurrency และความถูกต้องของข้อมูล | 15 |
-| Tests | 15 |
-| Docker / Compose (multi-stage, healthcheck, รันผ่านในครั้งแรก) | 10 |
-| Security (auth, validation, ไม่มี secrets ใน repo) | 10 |
-| README และเอกสาร | 5 |
-| **รวม** | **100** |
-
-| คะแนนพิเศษ | คะแนน |
-|---|---|
-| Redis (cache + invalidation, rate limit) | +5 |
-| Nginx / Load balancer (2 replica ขึ้นไป) | +5 |
-| Deploy บน cloud จริง | +5 |
-| PostgreSQL ขั้นสูง (cursor pagination, `pg_trgm`/FTS, connection pool) | +5 |
-| CI / E2E / load test | +5 |
-
-> งานหลักที่สมบูรณ์และมี test ดี มีน้ำหนักมากกว่าการทำคะแนนพิเศษครบ แนะนำให้ทำส่วนบังคับให้ดีก่อน
-
----
-
-## 7. คำถาม
-
-หากโจทย์ส่วนไหนไม่ชัดเจน ให้ตั้งสมมติฐานที่สมเหตุสมผล และเขียนสมมติฐานนั้นไว้ใน README
+- Production URL: https://frontend-production-df731db8.up.railway.app
+- Deploy บน Railway โดยเปิด public domain เฉพาะ frontend ส่วน backend, PostgreSQL และ Redis ติดต่อกันผ่าน Railway private network

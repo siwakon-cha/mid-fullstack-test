@@ -1,0 +1,11 @@
+.env
+.env.local
+node_modules/
+.next/
+coverage.out
+*.tsbuildinfo
+*.log
+.DS_Store
+docs/screenshots/real/*.tmp.png
+docs/
+md/

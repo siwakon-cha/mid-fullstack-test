@@ -1,0 +1,5 @@
+import RegisterForm from "@/components/RegisterForm";
+
+export default function RegisterPage() {
+  return <main className="shell page"><RegisterForm /></main>;
+}
